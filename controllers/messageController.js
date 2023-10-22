@@ -1,42 +1,51 @@
 const Message = require("../model/messageModel");
-module.exports.AddMessage = async (req, res, next) => {
-  try {
-    const { from, to, message } = req.body;
+const User = require("../model/userModel");
+const Chat = require("../model/chatModel");
+const asyncHandler = require("express-async-handler");
 
-    const data = await Message.create({
-      message: { text: message },
-      users: [from, to],
-      sender: from,
+const sendMessage = asyncHandler(async (req, res) => {
+  const { content, chatId } = req.body;
+  if (!content || !chatId) {
+    res.status(400);
+    throw new Error("Invalid message data");
+  }
+
+  let newMessage = {
+    sender: req.user._id,
+    content: content,
+    chat: chatId,
+  };
+
+  try {
+    let message = await Message.create(newMessage);
+    message = await message.populate("sender", "username avatar");
+    message = await message.populate("chat");
+    message = await User.populate(message, {
+      path: "chat.users",
+      select: "username avatar email",
     });
 
-    if (data) {
-      return res.status(200).json({ msg: "Message sent" });
-    } else {
-      return res.status(400).json({ msg: "Error Sending Message" });
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
-module.exports.GetAllMessages = async (req, res, next) => {
-  try {
-    const { from, to } = req.body;
-
-    const messages = await Message.find({
-      users: {
-        $all: [from, to],
-      },
-    }).sort({ updatedAt: 1 });
-    const projectMessages = messages.map((msg) => {
-      return {
-        fromSelf: msg.sender.toString() === from,
-        message: msg.message.text,
-      };
+    await Chat.findByIdAndUpdate(chatId, {
+      latestMessage: message,
     });
 
-    return res.status(200).json(projectMessages);
+    res.status(200).json(message);
   } catch (error) {
-    next(error);
+    res.status(400);
+    throw new Error(error.message);
   }
-};
+});
+
+const getAllMessages = asyncHandler(async (req, res) => {
+  try {
+    let messages = await Message.find({ chat: req.params.chatId })
+      .populate("sender", "username email avatar")
+      .populate("chat");
+
+    res.status(200).json(messages);
+  } catch (error) {
+    res.status(400);
+    throw new Error(error.message);
+  }
+});
+module.exports = { sendMessage, getAllMessages };
